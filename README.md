@@ -1,12 +1,10 @@
 # WAF Home Lab with SafeLine
 
-Built this lab to learn how a Web Application Firewall actually sits in front of an app, what it catches, and what it doesn't. I put a deliberately vulnerable app (DVWA) behind SafeLine WAF, attacked it from Kali, and watched what happened.
+A home lab where I put a deliberately vulnerable web app (DVWA) behind SafeLine WAF, attacked it from Kali Linux, and looked at what the WAF detected, blocked, and missed. I built it to understand how a Web Application Firewall works as a reverse proxy in front of an application.
 
-Everything runs in VirtualBox on one machine. This page is the overview and my results. The step-by-step build is in **[BUILD-GUIDE.md](BUILD-GUIDE.md)**.
+The full setup, step by step, is in [BUILD-GUIDE.md](BUILD-GUIDE.md).
 
-> **Lab only.** DVWA is intentionally vulnerable. Keep it on an isolated network and never expose it to the internet.
-
-## What it looks like
+## Lab setup
 
 ```mermaid
 flowchart LR
@@ -15,25 +13,26 @@ flowchart LR
     K -.->|"admin UI :9443"| W
 ```
 
-SafeLine and DVWA live on the same Ubuntu VM. SafeLine takes ports 80/443, so Apache has to move to 8080. Every request from Kali goes through the WAF first.
+| Component | Details |
+|---|---|
+| Hypervisor | Oracle VirtualBox, NAT Network (`10.0.2.0/24`) |
+| Attacker | Kali Linux, `10.0.2.5` |
+| Target | Ubuntu Server 22.04 LTS, `10.0.2.15` |
+| Web stack | Apache2, PHP 8.1, MySQL 8.0 |
+| Vulnerable app | DVWA (security level Low) |
+| WAF | SafeLine v9.3.6, running in Docker |
+| TLS | Self-signed certificate for `dvwa.local` |
 
-| Machine | IP | Role |
+## What I tested
+
+| Test | Payload / method | Result |
 |---|---|---|
-| Kali Linux | 10.0.2.5 | Attacker |
-| Ubuntu Server 22.04 | 10.0.2.15 | DVWA + SafeLine (Docker) |
-
-## Results
-
-All attacks ran from Kali against DVWA (security level Low) with SafeLine in front.
-
-| Test | What I did | Result |
-|---|---|---|
-| SQL injection | `1' OR '1'='1` in the SQL Injection page | **Blocked** |
-| XSS | `<script>alert('XSS')</script>` in Reflected XSS | **Blocked** |
-| Command injection | `; ls -la /etc` in the Command Injection page | **Logged, not blocked** (see below) |
-| HTTP flood | `for i in {1..200}; do curl -k https://dvwa.local/; done` | **Challenged** by rate limiting |
-| IP deny rule | Deny rule on source IP `10.0.2.5` | **Forbidden** |
-| Auth gateway | SSO login required in front of DVWA | **Enforced** |
+| SQL injection | `1' OR '1'='1` | Blocked |
+| Reflected XSS | `<script>alert('XSS')</script>` | Blocked |
+| Command injection | `; ls -la /etc` | Detected and logged, but not blocked |
+| HTTP flood | 200 rapid `curl` requests | Rate limit triggered, Anti-Bot challenge served |
+| IP deny rule | Deny source IP `10.0.2.5` | Access Forbidden |
+| Auth gateway | SafeLine SSO in front of DVWA | Login required before reaching the app |
 
 <table>
   <tr>
@@ -42,21 +41,17 @@ All attacks ran from Kali against DVWA (security level Low) with SafeLine in fro
   </tr>
 </table>
 
-The command injection test is worth reading about: the WAF *detected* it but only *audited* it, so the payload still ran. Details are in the [build guide](BUILD-GUIDE.md#command-injection-detected-but-it-got-through).
-
-## Build it yourself
-
-Follow **[BUILD-GUIDE.md](BUILD-GUIDE.md)**. It covers the network, DVWA, moving Apache to 8080, the certificate, installing SafeLine, onboarding the app, and every test above.
-
 ## What I learned
 
-- **A WAF is a reverse proxy.** Seeing the upstream setting (`http://10.0.2.15:8080`) made it click that the app never sees the request unless the WAF lets it through.
-- **Port order matters.** Apache had to move off 80/443 before SafeLine could use them.
-- **Name resolution has to work on both machines.** `dvwa.local` needed a hosts entry on Kali and on Ubuntu.
-- **Audit mode is not protection.** The command injection test showed me the difference between logging and blocking.
-- **Layers stack.** Rate limiting, IP rules, and an auth gateway each stop things the attack signatures don't.
-- **NAT Network over Bridged** keeps an intentionally vulnerable app away from the rest of my network.
+- A WAF is a reverse proxy. The app only sees a request if the WAF forwards it.
+- Detecting an attack and blocking it are separate settings. My command injection test was logged as *Audited*, so the payload still ran.
+- Apache had to move to port 8080 so SafeLine could take 80/443.
+- Rate limiting, IP rules, and an auth gateway each cover things attack signatures don't.
+- A NAT Network keeps the vulnerable app off my home network, which Bridged mode would not.
+
 
 ## Credits
 
-Built with [DVWA](https://github.com/digininja/DVWA) and [SafeLine WAF](https://github.com/chaitin/SafeLine).
+[DVWA](https://github.com/digininja/DVWA) and [SafeLine WAF](https://github.com/chaitin/SafeLine).
+
+DVWA is intentionally vulnerable. This lab runs on an isolated network and is not meant to be exposed to the internet.
